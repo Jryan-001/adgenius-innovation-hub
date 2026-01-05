@@ -723,7 +723,10 @@ export default function Editor() {
   const handleActionsReceived = async (actions) => {
     console.log('Applying actions:', actions);
 
+    console.log('🚀 handleActionsReceived CALLED with', actions.length, 'actions');
+
     for (const action of actions) {
+      console.log('👉 Processing action:', action.type, action);
       // Handle adding image from search query (via server proxy to bypass CORS)
       if (action.type === 'add_image' && action.data?.searchQuery) {
         try {
@@ -901,11 +904,20 @@ export default function Editor() {
       // ========================================
       // GENERATE COMPLETE AD LAYOUT
       // ========================================
+      // ========================================
+      // GENERATE COMPLETE AD LAYOUT
+      // ========================================
       if (action.type === 'generate_layout' && action.data) {
-        console.log('🎨 Generating complete ad layout:', action.data);
+        console.log('🎨 MATCHED generate_layout action');
+        console.log('🎨 Layout data:', action.data);
 
         const layout = action.data;
         const canvas = canvasRef.current;
+
+        if (!canvas) {
+          console.error('❌ Canvas ref is null during generate_layout');
+          continue;
+        }
 
         if (canvas) {
           // Only clear canvas if explicitly creating a new layout (not enhancing existing)

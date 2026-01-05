@@ -673,7 +673,7 @@ app.get('/api/ai/fetch-image', async (req, res) => {
         const base64 = buffer.toString('base64');
         const dataUrl = `data:${contentType};base64,${base64}`;
 
-        console.log('[ImageProxy] ✅ Image loaded for "' + query + '", size:', buffer.length, 'bytes');
+        console.log('[ImageProxy] ✅ Image loaded from Pexels for "' + query + '", size:', buffer.length, 'bytes');
 
         res.json({
             success: true,
@@ -686,23 +686,48 @@ app.get('/api/ai/fetch-image', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[ImageProxy] ❌ Error:', error.message);
+        console.error('[ImageProxy] ⚠️ Pexels error:', error.message);
+        console.log('[ImageProxy] 🔄 Falling back to Lorem Picsum...');
 
-        // Return a nice placeholder SVG as fallback
-        const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-            <rect fill="#fafafa" width="300" height="300"/>
-            <text x="150" y="140" font-family="Arial" font-size="40" fill="#ddd" text-anchor="middle">📷</text>
-            <text x="150" y="175" font-family="Arial" font-size="11" fill="#888" text-anchor="middle">${req.query.query || 'Image'}</text>
-            <text x="150" y="195" font-family="Arial" font-size="9" fill="#bbb" text-anchor="middle">(${error.message})</text>
-        </svg>`;
-        const base64Svg = Buffer.from(placeholderSvg).toString('base64');
+        try {
+            // Fallback to Lorem Flickr (supports keywords!)
+            // https://loremflickr.com/width/height/keyword
+            const keyword = query ? encodeURIComponent(query) : 'random';
+            const fallbackUrl = `https://loremflickr.com/${width}/${height}/${keyword}?random=${Date.now()}`;
 
-        res.json({
-            success: true,
-            dataUrl: `data:image/svg+xml;base64,${base64Svg}`,
-            isPlaceholder: true,
-            error: error.message
-        });
+            console.log('[ImageProxy] 🔄 Trying fallback with Lorem Flickr:', fallbackUrl);
+
+            const fallbackResponse = await fetch(fallbackUrl);
+            const arrayBuffer = await fallbackResponse.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const base64 = buffer.toString('base64');
+            const dataUrl = `data:image/jpeg;base64,${base64}`;
+
+            res.json({
+                success: true,
+                dataUrl: dataUrl,
+                originalUrl: fallbackUrl,
+                source: 'loremflickr_fallback',
+                isFallback: true
+            });
+        } catch (fallbackError) {
+            console.error('[ImageProxy] ❌ Fallback error:', fallbackError.message);
+
+            // Final fallback: SVG placeholder
+            const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+                <rect fill="#f0f0f0" width="${width}" height="${height}"/>
+                <text x="50%" y="45%" font-family="Arial" font-size="40" fill="#ccc" text-anchor="middle" dominant-baseline="middle">📷</text>
+                <text x="50%" y="60%" font-family="Arial" font-size="14" fill="#888" text-anchor="middle" dominant-baseline="middle">${req.query.query || 'Image'}</text>
+            </svg>`;
+            const base64Svg = Buffer.from(placeholderSvg).toString('base64');
+
+            res.json({
+                success: true,
+                dataUrl: `data:image/svg+xml;base64,${base64Svg}`,
+                isPlaceholder: true,
+                error: error.message
+            });
+        }
     }
 });
 
