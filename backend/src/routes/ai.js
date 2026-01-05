@@ -38,6 +38,21 @@ router.post('/generate-layout', async (req, res) => {
 });
 
 /**
+ * Chat with AI
+ * POST /api/ai/chat
+ */
+router.post('/chat', async (req, res) => {
+    try {
+        const result = await proxyToAI('/api/ai/chat', req.body);
+        res.json(result);
+    } catch (error) {
+        console.error('AI chat error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+/**
  * Generate copy (headlines, CTAs)
  * POST /api/ai/generate-copy
  */

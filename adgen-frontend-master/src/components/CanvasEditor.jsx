@@ -1,6 +1,11 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import * as fabric from 'fabric';
 
+// Make fabric available globally for RibbonToolbar
+if (typeof window !== 'undefined') {
+  window.fabric = fabric;
+}
+
 const CanvasEditor = forwardRef(({
   width = 500,
   height = 500,
@@ -57,16 +62,43 @@ const CanvasEditor = forwardRef(({
       fabricRef.current.setActiveObject(textObj);
       fabricRef.current.renderAll();
     },
-    addImage: (dataUrl) => {
+    addImage: (url, options = {}) => {
       if (!fabricRef.current) return;
       saveHistory();
-      fabric.FabricImage.fromURL(dataUrl).then((img) => {
-        img.scaleToWidth(Math.min(200, width * 0.5));
-        img.set({ left: 50, top: 50 });
+
+      // Handle external URLs with CORS
+      fabric.FabricImage.fromURL(url, { crossOrigin: 'anonymous' }).then((img) => {
+        // Scale image if width specified, otherwise default to 200
+        const targetWidth = options.scaleToWidth || 200;
+        img.scaleToWidth(Math.min(targetWidth, width * 0.8));
+
+        img.set({
+          left: options.left || options.top || 100,
+          top: options.top || 100,
+          ...options
+        });
+
         fabricRef.current.add(img);
+        fabricRef.current.setActiveObject(img);
+        fabricRef.current.renderAll();
+        console.log('Image added to canvas:', url.substring(0, 50) + '...');
+      }).catch(err => {
+        console.error('Failed to load image:', err);
+        // Fallback: add a placeholder rectangle
+        const placeholder = new fabric.Rect({
+          left: options.left || 100,
+          top: options.top || 100,
+          width: 150,
+          height: 150,
+          fill: '#f0f0f0',
+          stroke: '#ccc',
+          strokeWidth: 2
+        });
+        fabricRef.current.add(placeholder);
         fabricRef.current.renderAll();
       });
     },
+
     addRectangle: () => {
       if (!fabricRef.current) return;
       saveHistory();

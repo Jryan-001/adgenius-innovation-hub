@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import CanvasEditor from "../components/CanvasEditor";
 import ChatInterface from "../components/ChatInterface";
 import LayersPanel from "../components/LayersPanel";
+import RibbonToolbar from "../components/RibbonToolbar";
 import { generateAd, checkCompliance, chat } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -31,6 +32,16 @@ import {
   ZoomOut,
   Layers
 } from "lucide-react";
+
+// Helper function to darken/lighten hex colors
+const adjustColor = (hex, percent) => {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + percent));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0x00FF) + percent));
+  const b = Math.min(255, Math.max(0, (num & 0x0000FF) + percent));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+};
+
 
 export default function Editor() {
   const navigate = useNavigate();
@@ -709,12 +720,171 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleActionsReceived = (actions) => {
+  const handleActionsReceived = async (actions) => {
     console.log('Applying actions:', actions);
 
-    let needsRerender = false;
+    for (const action of actions) {
+      // Handle adding image from search query (via server proxy to bypass CORS)
+      if (action.type === 'add_image' && action.data?.searchQuery) {
+        try {
+          const searchQuery = encodeURIComponent(action.data.searchQuery);
+          const width = action.data.width || 300;
+          const height = action.data.height || 300;
 
-    actions.forEach(action => {
+          // Use AI Engine server proxy to fetch images (port 3001, NOT the backend proxy)
+          const AI_ENGINE_URL = 'http://localhost:3001';
+          const proxyUrl = `${AI_ENGINE_URL}/api/ai/fetch-image?query=${searchQuery}&width=${width}&height=${height}`;
+
+
+          console.log('Fetching image via proxy for:', action.data.searchQuery);
+
+          const response = await fetch(proxyUrl);
+          const result = await response.json();
+
+          if (result.success && result.dataUrl && canvasRef.current) {
+            canvasRef.current.addImage(result.dataUrl, {
+              top: action.data.top || 200,
+              left: action.data.left || 100,
+              scaleToWidth: width,
+              alt: action.data.alt || action.data.searchQuery
+            });
+            console.log('Image added successfully!');
+          } else {
+            console.error('Failed to fetch image:', result.error);
+          }
+        } catch (e) {
+          console.error('Failed to add image:', e);
+        }
+      }
+
+      // ========================================
+      // SET IMAGE AS BACKGROUND (fills canvas)
+      // ========================================
+      if (action.type === 'set_background_image' && action.data?.searchQuery) {
+        try {
+          const searchQuery = encodeURIComponent(action.data.searchQuery);
+          const canvasWidth = canvasSize?.width || 400;
+          const canvasHeight = canvasSize?.height || 600;
+
+          const AI_ENGINE_URL = 'http://localhost:3001';
+          const proxyUrl = `${AI_ENGINE_URL}/api/ai/fetch-image?query=${searchQuery}&width=${canvasWidth}&height=${canvasHeight}`;
+
+          console.log('Fetching background image:', action.data.searchQuery);
+          const response = await fetch(proxyUrl);
+          const result = await response.json();
+
+          if (result.success && result.dataUrl && canvasRef.current) {
+            // Add image at 0,0 and scale to fill canvas
+            canvasRef.current.addImage(result.dataUrl, {
+              top: 0,
+              left: 0,
+              scaleToWidth: canvasWidth,
+              selectable: true
+            });
+
+            // Send to back so other elements are on top
+            const canvas = canvasRef.current.getCanvas?.();
+            if (canvas) {
+              const objects = canvas.getObjects();
+              if (objects.length > 0) {
+                const bgImage = objects[objects.length - 1];
+                canvas.sendObjectToBack(bgImage);
+                canvas.renderAll();
+              }
+            }
+            console.log('✅ Background image set and stretched to fill canvas!');
+          }
+        } catch (e) {
+          console.error('Failed to set background image:', e);
+        }
+      }
+
+      // ========================================
+      // MODIFY SELECTED ELEMENT
+      // ========================================
+      if (action.type === 'modify_selected' && action.data?.action) {
+        const canvas = canvasRef.current?.getCanvas?.();
+        if (canvas) {
+          const activeObject = canvas.getActiveObject();
+
+          if (activeObject) {
+            const canvasWidth = canvasSize?.width || 400;
+            const canvasHeight = canvasSize?.height || 600;
+
+            switch (action.data.action) {
+              case 'set_as_background':
+              case 'stretch_to_fill':
+                // Scale the selected object to fill the entire canvas
+                activeObject.set({
+                  left: 0,
+                  top: 0,
+                  scaleX: canvasWidth / activeObject.width,
+                  scaleY: canvasHeight / activeObject.height
+                });
+                canvas.sendObjectToBack(activeObject);
+                canvas.renderAll();
+                console.log('✅ Selected element set as background and stretched to fill!');
+                break;
+
+              case 'delete':
+                canvas.remove(activeObject);
+                canvas.renderAll();
+                console.log('✅ Selected element deleted');
+                break;
+
+              case 'bring_to_front':
+                canvas.bringObjectToFront(activeObject);
+                canvas.renderAll();
+                console.log('✅ Element brought to front');
+                break;
+
+              case 'send_to_back':
+                canvas.sendObjectToBack(activeObject);
+                canvas.renderAll();
+                console.log('✅ Element sent to back');
+                break;
+            }
+          } else {
+            console.warn('No element selected to modify');
+          }
+        }
+      }
+
+      // Handle adding text
+      if ((action.type === 'add_text' || action.type === 'addText') && action.data?.text) {
+        if (canvasRef.current) {
+          canvasRef.current.addText(action.data.text, {
+            fontSize: action.data.fontSize || 32,
+            fontWeight: action.data.fontWeight || 'normal',
+            fill: action.data.fill || '#000000',
+            top: action.data.top || 100,
+            left: action.data.left || 100
+          });
+        }
+      }
+
+      // Handle adding shape
+      if (action.type === 'add_shape' && action.data?.shape) {
+        if (canvasRef.current) {
+          const shape = action.data.shape.toLowerCase();
+          if (shape === 'rectangle' || shape === 'rect') {
+            canvasRef.current.addRectangle();
+          } else if (shape === 'circle') {
+            canvasRef.current.addCircle();
+          } else if (shape === 'triangle') {
+            canvasRef.current.addTriangle();
+          } else if (shape === 'star') {
+            // If addStar exists, use it
+            if (canvasRef.current.addStar) canvasRef.current.addStar();
+            else canvasRef.current.addRectangle(); // fallback
+          } else if (shape === 'heart') {
+            if (canvasRef.current.addHeart) canvasRef.current.addHeart();
+            else canvasRef.current.addCircle(); // fallback
+          }
+        }
+      }
+
+      // Handle layout changes
       if (action.type === 'layout' && action.changes) {
         setElements(prev => prev.map(el => {
           if (el.id === action.target || el.type === action.target) {
@@ -726,18 +896,145 @@ export default function Editor() {
         if (canvasRef.current) {
           canvasRef.current.updateElement(action.target, action.changes);
         }
-        needsRerender = true;
       }
 
+      // ========================================
+      // GENERATE COMPLETE AD LAYOUT
+      // ========================================
+      if (action.type === 'generate_layout' && action.data) {
+        console.log('🎨 Generating complete ad layout:', action.data);
+
+        const layout = action.data;
+        const canvas = canvasRef.current;
+
+        if (canvas) {
+          // Only clear canvas if explicitly creating a new layout (not enhancing existing)
+          // Check if clearFirst is specified or if canvas is empty
+          const fabricCanvas = canvas.getCanvas?.();
+          const hasExistingElements = fabricCanvas?.getObjects?.()?.length > 0;
+
+          if (layout.clearFirst !== false && !hasExistingElements) {
+            canvas.clearCanvas();
+            console.log('Canvas cleared for new layout');
+          } else {
+            console.log('Keeping existing elements, adding layout on top');
+          }
+
+          // Get canvas dimensions
+          const canvasWidth = canvasSize?.width || 400;
+          const canvasHeight = canvasSize?.height || 600;
+
+          // Set background
+          if (layout.background) {
+            let bgColor = '#ffffff';
+            if (layout.background.type === 'gradient' && layout.background.colors?.length >= 2) {
+              // For gradient, we'll use the first color (Fabric.js doesn't support CSS gradients directly)
+              bgColor = layout.background.colors[0];
+            } else if (layout.background.type === 'solid' && layout.background.colors?.[0]) {
+              bgColor = layout.background.colors[0];
+            }
+            canvas.setBackgroundColor(bgColor);
+          }
+
+          // Process elements in order
+          for (const element of (layout.elements || [])) {
+            try {
+              // Calculate positions based on element type and position
+              const getPosition = (position, size) => {
+                const padding = 30;
+                const positions = {
+                  top: padding,
+                  center: (canvasHeight - size) / 2,
+                  bottom: canvasHeight - size - padding
+                };
+                return positions[position] || positions.center;
+              };
+
+              if (element.type === 'image') {
+                // Fetch and add hero image
+                const searchQuery = encodeURIComponent(element.searchQuery);
+                const imgSize = element.size === 'large' ? 280 : element.size === 'small' ? 120 : 200;
+
+                const AI_ENGINE_URL = 'http://localhost:3001';
+                const proxyUrl = `${AI_ENGINE_URL}/api/ai/fetch-image?query=${searchQuery}&width=${imgSize}&height=${imgSize}`;
+
+                console.log('Fetching hero image:', element.searchQuery);
+                const response = await fetch(proxyUrl);
+                const result = await response.json();
+
+                if (result.success && result.dataUrl) {
+                  const imgTop = getPosition(element.position, imgSize);
+                  canvas.addImage(result.dataUrl, {
+                    top: imgTop,
+                    left: (canvasWidth - imgSize) / 2, // Center horizontally
+                    scaleToWidth: imgSize
+                  });
+                  console.log('✅ Hero image added');
+                }
+              }
+
+              if (element.type === 'headline') {
+                const headlineTop = element.position === 'top' ? 40 :
+                  element.position === 'bottom' ? canvasHeight - 120 :
+                    canvasHeight / 2 - 60;
+                canvas.addText(element.text, {
+                  fontSize: 36,
+                  fontWeight: 'bold',
+                  fill: '#FFFFFF',
+                  top: headlineTop,
+                  left: canvasWidth / 2 - 120,
+                  textAlign: 'center'
+                });
+                console.log('✅ Headline added:', element.text);
+              }
+
+              if (element.type === 'subheadline') {
+                canvas.addText(element.text, {
+                  fontSize: 18,
+                  fontWeight: 'normal',
+                  fill: '#CCCCCC',
+                  top: 90, // Below headline
+                  left: canvasWidth / 2 - 100,
+                  textAlign: 'center'
+                });
+                console.log('✅ Subheadline added:', element.text);
+              }
+
+              if (element.type === 'cta') {
+                // Add CTA as text with background (simulated button)
+                canvas.addText(element.text, {
+                  fontSize: 20,
+                  fontWeight: 'bold',
+                  fill: element.color || '#FFFFFF',
+                  top: canvasHeight - 80,
+                  left: canvasWidth / 2 - 60,
+                  textAlign: 'center',
+                  backgroundColor: element.color ? adjustColor(element.color, -30) : '#333333',
+                  padding: 15
+                });
+                console.log('✅ CTA button added:', element.text);
+              }
+
+            } catch (elementError) {
+              console.error('Error adding element:', elementError);
+            }
+          }
+
+          console.log('🎉 Complete ad layout generated!');
+        }
+      }
+
+      // Handle color changes
       if (action.type === 'color' && action.changes) {
         setPalette(prev => ({ ...prev, ...action.changes }));
 
         if (action.changes.background && canvasRef.current) {
           canvasRef.current.setBackgroundColor(action.changes.background);
         }
-        needsRerender = true;
       }
 
+
+      // Handle copy/text updates
       if (action.type === 'copy' && action.changes) {
         setElements(prev => prev.map(el => {
           if (el.id === action.target || el.type === action.target) {
@@ -758,21 +1055,11 @@ export default function Editor() {
             }
           }
         }
-        needsRerender = true;
       }
-
-      // Handle adding new text
-      if (action.type === 'addText' && action.changes?.text) {
-        if (canvasRef.current) {
-          canvasRef.current.addText(action.changes.text, action.changes);
-        }
-      }
-    });
-
-    // Note: We intentionally DO NOT increment canvasKey here.
-    // Incrementing key forces a remount which clears the undo history.
-    // The canvas is updated imperatively via canvasRef, so visual changes show immediately.
+    }
   };
+
+
 
   const handleAIMagic = async () => {
     setIsGenerating(true);
@@ -950,14 +1237,6 @@ export default function Editor() {
           <Palette className="w-5 h-5" />
         </button>
 
-        {/* Shapes Button */}
-        <button
-          onClick={() => setActivePanel(activePanel === 'shapes' ? null : 'shapes')}
-          className={`p-3 rounded-xl ${activePanel === 'shapes' ? 'bg-white text-blue-700' : 'bg-white/20 text-white hover:bg-white/30'}`}
-          title="Add Shapes"
-        >
-          <Shapes className="w-5 h-5" />
-        </button>
 
         {/* Layers Button */}
         <button
@@ -1040,48 +1319,6 @@ export default function Editor() {
         </div>
       )}
 
-      {/* Shapes Panel */}
-      {activePanel === 'shapes' && (
-        <div className="w-64 bg-white border-r shadow-lg p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-800">Shapes</h3>
-            <button onClick={() => setActivePanel(null)} className="text-gray-400 hover:text-gray-600">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => { canvasRef.current?.addRectangle(); setActivePanel(null); }}
-              className="p-4 bg-gray-50 rounded-xl hover:bg-blue-50 hover:border-blue-300 border-2 border-transparent transition flex flex-col items-center gap-2"
-            >
-              <Square className="w-8 h-8 text-blue-600" />
-              <span className="text-sm text-gray-600">Rectangle</span>
-            </button>
-            <button
-              onClick={() => { canvasRef.current?.addCircle(); setActivePanel(null); }}
-              className="p-4 bg-gray-50 rounded-xl hover:bg-purple-50 hover:border-purple-300 border-2 border-transparent transition flex flex-col items-center gap-2"
-            >
-              <Circle className="w-8 h-8 text-purple-600" />
-              <span className="text-sm text-gray-600">Circle</span>
-            </button>
-            <button
-              onClick={() => { canvasRef.current?.addTriangle(); setActivePanel(null); }}
-              className="p-4 bg-gray-50 rounded-xl hover:bg-green-50 hover:border-green-300 border-2 border-transparent transition flex flex-col items-center gap-2"
-            >
-              <Triangle className="w-8 h-8 text-green-600" />
-              <span className="text-sm text-gray-600">Triangle</span>
-            </button>
-            <button
-              onClick={() => { canvasRef.current?.addLine(); setActivePanel(null); }}
-              className="p-4 bg-gray-50 rounded-xl hover:bg-gray-100 hover:border-gray-400 border-2 border-transparent transition flex flex-col items-center gap-2"
-            >
-              <Minus className="w-8 h-8 text-gray-600" />
-              <span className="text-sm text-gray-600">Line</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Layers Panel */}
       {activePanel === 'layers' && (
@@ -1101,120 +1338,58 @@ export default function Editor() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Toolbar */}
-        <header className="bg-white shadow-sm px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-gray-800">AdGen Editor</h1>
+        {/* Office-Style Ribbon Toolbar */}
+        <RibbonToolbar
+          canvas={fabricCanvas}
+          canvasRef={canvasRef}
+          onAIMagic={handleAIMagic}
+          onCheckCompliance={handleCheckCompliance}
+          onShowTemplates={() => setShowTemplates(true)}
+          onShowChat={() => setShowChat(!showChat)}
+          showChat={showChat}
+          onExport={(format) => {
+            if (format === 'png') handleExportWithTracking();
+            else if (format === 'jpeg' && canvasRef.current) {
+              const dataUrl = canvasRef.current.exportJPEG();
+              if (dataUrl) {
+                const link = document.createElement('a');
+                link.download = 'adgen-poster.jpg';
+                link.href = dataUrl;
+                link.click();
+              }
+            } else if (format === 'svg' && canvasRef.current) {
+              const svg = canvasRef.current.exportSVG();
+              if (svg) {
+                const blob = new Blob([svg], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.download = 'adgen-poster.svg';
+                link.href = url;
+                link.click();
+                URL.revokeObjectURL(url);
+              }
+            }
+          }}
+          selectedRatio={selectedRatio}
+          onRatioChange={handleRatioChange}
+          isGenerating={isGenerating}
+          isCheckingCompliance={isCheckingCompliance}
+        />
 
+        {/* Compliance Score Badge (floating) */}
+        {complianceScore && (
+          <div className="absolute top-24 right-6 z-10">
             <button
-              onClick={handleAIMagic}
-              disabled={isGenerating}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-full font-medium hover:shadow-lg transition"
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              AI Magic
-            </button>
-
-            <button
-              onClick={handleCheckCompliance}
-              disabled={isCheckingCompliance}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full font-medium transition ${isCheckingCompliance ? 'bg-gray-100 text-gray-400' : 'bg-green-100 text-green-700 hover:bg-green-200'
+              onClick={() => setShowComplianceDetails(true)}
+              className={`px-3 py-1 rounded-full text-sm font-medium transition-all hover:scale-105 active:scale-95 shadow-lg ${complianceScore.score >= 80 ? 'bg-green-500 text-white' :
+                complianceScore.score >= 60 ? 'bg-yellow-500 text-white' :
+                  'bg-red-500 text-white'
                 }`}
             >
-              {isCheckingCompliance ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <CheckCircle className="w-4 h-4" />
-              )}
-              {isCheckingCompliance ? 'Checking...' : 'Check Compliance'}
-            </button>
-
-            <button
-              onClick={() => setShowTemplates(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-pink-100 text-pink-700 rounded-full font-medium hover:bg-pink-200 transition"
-            >
-              📋 Templates
+              {complianceScore.score}% Compliant ℹ️
             </button>
           </div>
-
-          <div className="flex items-center gap-3">
-            {complianceScore && (
-              <button
-                onClick={() => setShowComplianceDetails(true)}
-                className={`px-3 py-1 rounded-full text-sm font-medium transition-all hover:scale-105 active:scale-95 ${complianceScore.score >= 80 ? 'bg-green-100 text-green-700' :
-                  complianceScore.score >= 60 ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
-                  }`}
-              >
-                {complianceScore.score}% Compliant ℹ️
-              </button>
-            )}
-
-            {/* Export Dropdown */}
-            <div className="relative group">
-              <button
-                className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-full font-medium hover:bg-gray-700 transition"
-              >
-                <Download className="w-4 h-4" />
-                Export ▾
-              </button>
-              <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-xl border opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 min-w-[160px]">
-                <button
-                  onClick={() => {
-                    handleExportWithTracking();
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left"
-                >
-                  <FileImage className="w-4 h-4 text-blue-600" />
-                  <span>PNG (High Quality)</span>
-                </button>
-                <button
-                  onClick={() => {
-                    if (canvasRef.current) {
-                      const dataUrl = canvasRef.current.exportJPEG();
-                      if (dataUrl) {
-                        const link = document.createElement('a');
-                        link.download = 'adgen-poster.jpg';
-                        link.href = dataUrl;
-                        link.click();
-                        incrementStat('exports');
-                      }
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left"
-                >
-                  <FileImage className="w-4 h-4 text-orange-600" />
-                  <span>JPEG (Compressed)</span>
-                </button>
-                <button
-                  onClick={() => {
-                    if (canvasRef.current) {
-                      const svg = canvasRef.current.exportSVG();
-                      if (svg) {
-                        const blob = new Blob([svg], { type: 'image/svg+xml' });
-                        const url = URL.createObjectURL(blob);
-                        const link = document.createElement('a');
-                        link.download = 'adgen-poster.svg';
-                        link.href = url;
-                        link.click();
-                        URL.revokeObjectURL(url);
-                        incrementStat('exports');
-                      }
-                    }
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left rounded-b-xl"
-                >
-                  <FileCode className="w-4 h-4 text-green-600" />
-                  <span>SVG (Vector)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </header>
+        )}
 
         {/* Canvas Area */}
         <main className="flex-1 flex flex-col overflow-hidden">

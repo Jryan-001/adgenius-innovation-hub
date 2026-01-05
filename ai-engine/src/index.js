@@ -612,7 +612,102 @@ app.post('/api/ai/generate-ad', async (req, res) => {
     }
 });
 
+// ============================================
+// IMAGE PROXY ENDPOINT (using Pexels API)
+// ============================================
+
+/**
+ * Fetch image using Pexels API for keyword-based search
+ * Pexels provides free API with proper keyword search
+ * GET /api/ai/fetch-image?query=coffee+cup&width=300&height=300
+ */
+app.get('/api/ai/fetch-image', async (req, res) => {
+    try {
+        const { query, width = 400, height = 400 } = req.query;
+
+        if (!query) {
+            return res.status(400).json({ error: 'Query parameter is required' });
+        }
+
+        // Use Pexels API for keyword search
+        // Free API key - register at pexels.com/api for your own
+        const PEXELS_API_KEY = process.env.PEXELS_API_KEY || 'H2jk9uKnhRmL6WPwh89zBezWvr';
+
+        const searchUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1&size=medium`;
+
+        console.log('[ImageProxy] Searching Pexels for:', query);
+
+        const searchResponse = await fetch(searchUrl, {
+            headers: {
+                'Authorization': PEXELS_API_KEY
+            }
+        });
+
+        if (!searchResponse.ok) {
+            throw new Error(`Pexels API returned ${searchResponse.status}`);
+        }
+
+        const searchData = await searchResponse.json();
+
+        if (!searchData.photos || searchData.photos.length === 0) {
+            throw new Error('No images found for: ' + query);
+        }
+
+        // Get the first image URL
+        const photo = searchData.photos[0];
+        const imageUrl = photo.src.medium || photo.src.small || photo.src.original;
+
+        console.log('[ImageProxy] Found image:', imageUrl);
+
+        // Fetch the actual image
+        const imageResponse = await fetch(imageUrl);
+
+        if (!imageResponse.ok) {
+            throw new Error(`Failed to fetch image: ${imageResponse.status}`);
+        }
+
+        const arrayBuffer = await imageResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${contentType};base64,${base64}`;
+
+        console.log('[ImageProxy] ✅ Image loaded for "' + query + '", size:', buffer.length, 'bytes');
+
+        res.json({
+            success: true,
+            dataUrl: dataUrl,
+            originalUrl: imageUrl,
+            size: buffer.length,
+            query: query,
+            photographer: photo.photographer,
+            source: 'pexels'
+        });
+
+    } catch (error) {
+        console.error('[ImageProxy] ❌ Error:', error.message);
+
+        // Return a nice placeholder SVG as fallback
+        const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+            <rect fill="#fafafa" width="300" height="300"/>
+            <text x="150" y="140" font-family="Arial" font-size="40" fill="#ddd" text-anchor="middle">📷</text>
+            <text x="150" y="175" font-family="Arial" font-size="11" fill="#888" text-anchor="middle">${req.query.query || 'Image'}</text>
+            <text x="150" y="195" font-family="Arial" font-size="9" fill="#bbb" text-anchor="middle">(${error.message})</text>
+        </svg>`;
+        const base64Svg = Buffer.from(placeholderSvg).toString('base64');
+
+        res.json({
+            success: true,
+            dataUrl: `data:image/svg+xml;base64,${base64Svg}`,
+            isPlaceholder: true,
+            error: error.message
+        });
+    }
+});
+
 // Start server
+
 app.listen(PORT, () => {
     console.log(`
 ╔═══════════════════════════════════════════════════════════╗

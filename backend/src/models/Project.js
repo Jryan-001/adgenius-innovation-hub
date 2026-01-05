@@ -25,25 +25,22 @@ const projectSchema = new mongoose.Schema({
         enum: ['instagram_story', 'instagram_feed', 'facebook_feed', 'retail_display', 'retail_poster'],
         default: 'instagram_story'
     },
+    // Store full Fabric.js canvas JSON - allows any structure
     canvasData: {
-        elements: [{
-            id: String,
-            x: Number,
-            y: Number,
-            width: Number,
-            height: Number,
-            imageUrl: String,
-            text: String
-        }],
-        palette: {
-            background: String,
-            primary: String,
-            secondary: String,
-            text: String
-        },
-        headline: String,
-        cta: String
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
     },
+    // Store canvas thumbnail as base64 or URL for quick preview
+    thumbnail: {
+        type: String,
+        default: null
+    },
+    // Aspect ratio for canvas restoration
+    aspectRatio: {
+        type: String,
+        default: '1:1'
+    },
+
     complianceStatus: {
         score: Number,
         status: {
