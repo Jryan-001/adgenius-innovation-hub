@@ -9,18 +9,39 @@ import express from 'express';
 
 const router = express.Router();
 
-const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://localhost:3001';
+const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://127.0.0.1:3001';
 
 /**
- * Helper to proxy requests to AI Engine
+ * Helper to proxy requests to AI Engine with robust error handling
  */
 async function proxyToAI(endpoint, body) {
-    const response = await fetch(`${AI_ENGINE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
-    return response.json();
+    const url = `${AI_ENGINE_URL}${endpoint}`;
+    try {
+        console.log(`[Proxy] Forwarding to: ${url}`);
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[Proxy] AI Engine error (${response.status}):`, errorText);
+            try {
+                // Try to parse as JSON error
+                return JSON.parse(errorText);
+            } catch (e) {
+                // If not JSON, throw as error
+                throw new Error(`AI Engine failed: ${response.status} ${response.statusText}`);
+            }
+        }
+
+        return response.json();
+    } catch (error) {
+        console.error(`[Proxy] Network/Fetch error to ${url}:`, error.message);
+        throw error;
+    }
 }
 
 /**
