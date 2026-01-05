@@ -142,7 +142,7 @@ YOUR RESPONSE:`;
 
     try {
       const genAI = new GoogleGenerativeAI(currentKey);
-      const modelName = process.env.GEMINI_MODEL || 'gemini-pro';
+      const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';
 
       const model = genAI.getGenerativeModel({
         model: modelName,
